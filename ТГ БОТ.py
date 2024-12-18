@@ -4,6 +4,8 @@ from requests.auth import HTTPBasicAuth
 import pandas as pd
 from bs4 import BeautifulSoup
 from aiogram import Bot, Dispatcher, types
+from aiogram.dispatcher import FSMContext
+from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.types import ParseMode, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
@@ -13,6 +15,10 @@ TOKEN = '7602200094:AAGxZh24TBmuofCn1sIlSK9i96-6hY8oOuc'
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
 dp.middleware.setup(LoggingMiddleware())
+
+# Состояния для хранения суммы в рублях
+class Form(StatesGroup):
+    amount = State()
 
 # 1. Вставьте здесь функцию для создания кнопки ввода суммы
 def get_amount_keyboard():
@@ -49,13 +55,6 @@ def get_currency_keyboard():
     keyboard.add(InlineKeyboardButton("Все варианты", callback_data='all_variants'))
     return keyboard
 
-# 6. Вставьте здесь обработчик нажатия на кнопки выбора валют
-@dp.callback_query_handler(lambda c: c.data in ['rub_usd_bat', 'rub_eur_bat', 'rub_cny_bat', 'rub_bat', 'all_variants'])
-async def process_currency_selection(callback_query: types.CallbackQuery):
-    await bot.answer_callback_query(callback_query.id)
-    selected_option = callback_query.data
-    # Здесь вы можете добавить логику для конвертации валюты в зависимости от выбранного варианта
-    await bot.send_message(callback_query.from_user.id, f"Вы выбрали: {selected_option}")
 
 def get_currency_rates(url):
     """Получает курсы всех валют с сайта myfin.by с помощью BeautifulSoup."""
@@ -212,11 +211,48 @@ def convert_currency(
     return thb_from_rub, thb_from_usd, thb_from_eur, thb_from_cny
 
 
+# Обработчик нажатия на кнопки выбора валют
+@dp.callback_query_handler(lambda c: c.data in ['rub_usd_bat', 'rub_eur_bat', 'rub_cny_bat', 'rub_bat', 'all_variants'])
+async def process_currency_selection(callback_query: types.CallbackQuery, state: FSMContext):
+    await bot.answer_callback_query(callback_query.id)
+    selected_option = callback_query.data
 
-@dp.message_handler(commands=['start'])
-async def start(message: types.Message):
-    await message.reply("Привет! Я бот-конвертер валют. Чтобы конвертировать валюту, отправьте мне сумму в рублях.")
+    # Получаем сумму в рублях из состояния пользователя
+    user_data = await state.get_data()
+    amount_rub = user_data['amount']
 
+    # Получаем сумму в рублях из состояния пользователя
+    user_data = await state.get_data()
+    amount_rub = user_data['amount']
+
+    # Вычисляем курсы валют
+    thb_from_rub, thb_from_usd, thb_from_eur, thb_from_cny = convert_currency(
+        amount_rub,
+        rub_to_usd,
+        rub_to_eur,
+        rub_to_cny,
+        thb_from_usd,
+        thb_from_eur,
+        thb_from_cny,
+        thb_from_rub,
+    )
+
+    # Формируем сообщение в зависимости от выбранного варианта
+    if selected_option == 'rub_usd_bat':
+        message = f"Курс Рубль-Доллар-Бат: {thb_from_usd} THB"
+    elif selected_option == 'rub_eur_bat':
+        message = f"Курс Рубль-Евро-Бат: {thb_from_eur} THB"
+    elif selected_option == 'rub_cny_bat':
+        message = f"Курс Рубль-Юань-Бат: {thb_from_cny} THB"
+    elif selected_option == 'rub_bat':
+        message = f"Курс Рубль-Бат: {thb_from_rub} THB"
+    elif selected_option == 'all_variants':
+        message = (f"Курс Рубль-Доллар-Бат: {thb_from_usd} THB\n"
+                   f"Курс Рубль-Евро-Бат: {thb_from_eur} THB\n"
+                   f"Курс Рубль-Юань-Бат: {thb_from_cny} THB\n"
+                   f"Курс Рубль-Бат: {thb_from_rub} THB")
+
+    await bot.send_message(callback_query.from_user.id, message)
 
 @dp.message_handler()
 async def convert(message: types.Message):
